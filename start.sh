@@ -1,6 +1,14 @@
 #!/bin/bash
 set -e
 
+# Persist ~/.openclaw to volume so config/approvals survive redeploys
+mkdir -p /data/.openclaw
+if [ ! -L /root/.openclaw ]; then
+  [ -d /root/.openclaw ] && cp -rn /root/.openclaw/. /data/.openclaw/ 2>/dev/null || true
+  rm -rf /root/.openclaw
+  ln -s /data/.openclaw /root/.openclaw
+fi
+
 # Create state directories with restricted permissions
 mkdir -p /data/tailscale /data/credentials
 chmod 700 /data /data/credentials
@@ -19,8 +27,18 @@ tailscaled --state=/data/tailscale/tailscaled.state \
            --socket=/var/run/tailscale/tailscaled.sock \
            --tun=userspace-networking &
 
-# Wait for tailscaled socket
-sleep 2
+# Wait for tailscaled socket to be ready
+TAILSCALED_SOCK="/var/run/tailscale/tailscaled.sock"
+TS_WAIT=0
+TS_TIMEOUT=30
+until [ -S "$TAILSCALED_SOCK" ]; do
+  if [ "$TS_WAIT" -ge "$TS_TIMEOUT" ]; then
+    echo "ERROR: tailscaled socket not available after ${TS_TIMEOUT}s" >&2
+    exit 1
+  fi
+  sleep 1
+  TS_WAIT=$((TS_WAIT + 1))
+done
 
 # Authenticate with Tailscale
 tailscale up --authkey="${TAILSCALE_AUTHKEY}" \
@@ -36,15 +54,31 @@ echo "NOTE: Tailscale Serve (HTTPS) is not supported with"
 echo "      userspace networking. Using HTTP + token auth."
 echo "============================================"
 
-# Graceful shutdown
-trap 'tailscale logout; kill $(jobs -p); exit 0' SIGTERM SIGINT
-
-# --bind lan: listens on all interfaces, reachable via Tailscale IP
-# Tailscale Serve (HTTPS) requires kernel networking (/dev/net/tun),
-# which is unavailable on Fly.io — so we use HTTP + token auth.
-# controlUi.allowInsecureAuth: true in openclaw.json bypasses the
-# secure-context check. Security is enforced by Tailscale (no public IPs).
-exec openclaw gateway \
+# Start gateway in background
+openclaw gateway \
   --allow-unconfigured \
   --port 3000 \
-  --bind lan
+  --bind lan &
+GATEWAY_PID=$!
+
+# Wait for gateway to be ready
+echo "Waiting for gateway..."
+until curl -sf http://127.0.0.1:3000/health > /dev/null 2>&1; do
+  sleep 1
+done
+echo "Gateway ready."
+
+# Start headless node host
+openclaw node run \
+  --host 127.0.0.1 \
+  --port 3000 \
+  --display-name "fly-node" &
+NODE_PID=$!
+
+echo "Headless node started (PID $NODE_PID) — approve pairing in Control UI"
+
+# Graceful shutdown
+trap 'tailscale logout; kill $GATEWAY_PID $NODE_PID 2>/dev/null; exit 0' SIGTERM SIGINT
+
+# Block until gateway exits
+wait $GATEWAY_PID

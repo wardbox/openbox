@@ -10,10 +10,7 @@
     "deny": [
       "group:automation",
       "group:runtime",
-      "gateway",
-      "cron",
-      "sessions_spawn",
-      "sessions_send"
+      "gateway"
     ],
     "fs": {
       "workspaceOnly": true

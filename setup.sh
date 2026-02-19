@@ -224,12 +224,10 @@ do_deploy() {
 
   ORG_ARRAY=()
   ORG_LABELS=()
-  while IFS= read -r line; do
-    slug=$(echo "$line" | cut -d'|' -f1)
-    name=$(echo "$line" | cut -d'|' -f2)
+  while IFS='|' read -r slug name; do
     ORG_ARRAY+=("$slug")
     ORG_LABELS+=("$slug ($name)")
-  done <<< "$(echo "$ORG_JSON" | grep -o '"[^"]*": *"[^"]*"' | sed 's/": */|/; s/"//g')"
+  done < <(echo "$ORG_JSON" | jq -r '.[] | [.slug, .name] | join("|")')
 
   if [ ${#ORG_ARRAY[@]} -eq 0 ]; then
     error "No Fly.io orgs found. Create one at https://fly.io/dashboard"
@@ -292,7 +290,7 @@ do_deploy() {
     EXISTING_SECRETS=$(fly secrets list -a "$APP_NAME" 2>/dev/null || true)
   fi
 
-  has_secret() { echo "$EXISTING_SECRETS" | grep -q "$1"; }
+  has_secret() { printf '%s\n' "$EXISTING_SECRETS" | awk 'NR>1{print $1}' | grep -qxF "$1"; }
 
   # ── Tailscale
   section "Tailscale"
@@ -505,7 +503,7 @@ Enable \`Reusable\` and \`Ephemeral\` when creating the key."
 
   if [ ${#SECRETS_ARGS[@]} -gt 0 ]; then
     info "Setting secrets..."
-    SECRETS_OUT=$(fly secrets set "${SECRETS_ARGS[@]}" -a "$APP_NAME" 2>&1) || {
+    SECRETS_OUT=$(printf '%s\n' "${SECRETS_ARGS[@]}" | fly secrets import -a "$APP_NAME" 2>&1) || {
       error "Failed to set secrets"
       error "$SECRETS_OUT"
       exit 1
@@ -530,19 +528,17 @@ Enable \`Reusable\` and \`Ephemeral\` when creating the key."
   info "Checking IPs..."
   IP_JSON=$(fly ips list -a "$APP_NAME" --json 2>&1 || echo "[]")
   RELEASED=0
-  echo "$IP_JSON" | \
-    grep -o '"Address": *"[^"]*"' | \
-    sed 's/.*": *"//; s/"//' | \
-    while read -r ip; do
-      IP_TYPE=$(echo "$IP_JSON" | grep -A2 "\"$ip\"" | grep -o '"Type": *"[^"]*"' | sed 's/.*": *"//; s/"//')
-      if [[ "$IP_TYPE" != "private_v6" ]]; then
-        if fly ips release "$ip" -a "$APP_NAME" -y 2>&1; then
-          success "Released $ip ($IP_TYPE)"
-        else
-          warn "Could not release $ip — remove manually: fly ips release $ip -a $APP_NAME"
-        fi
+  while read -r ip; do
+    IP_TYPE=$(echo "$IP_JSON" | grep -A2 "\"$ip\"" | grep -o '"Type": *"[^"]*"' | sed 's/.*": *"//; s/"//')
+    if [[ "$IP_TYPE" != "private_v6" ]]; then
+      if fly ips release "$ip" -a "$APP_NAME" -y 2>&1; then
+        success "Released $ip ($IP_TYPE)"
+        RELEASED=$((RELEASED + 1))
+      else
+        warn "Could not release $ip — remove manually: fly ips release $ip -a $APP_NAME"
       fi
-    done
+    fi
+  done < <(echo "$IP_JSON" | grep -o '"Address": *"[^"]*"' | sed 's/.*": *"//; s/"//')
 
   HAS_PRIVATE=$(echo "$IP_JSON" | grep -c "private_v6" || true)
   if [ "$HAS_PRIVATE" -eq 0 ]; then
@@ -556,7 +552,7 @@ Enable \`Reusable\` and \`Ephemeral\` when creating the key."
 
   info "Waiting for Tailscale..."
   TS_IP=""
-  for i in 1 2 3 4 5 6; do
+  for _ in 1 2 3 4 5 6; do
     TS_IP=$(fly ssh console -a "$APP_NAME" -C "tailscale ip -4" 2>/dev/null | tr -d '[:space:]' | grep -oE '100\.[0-9]+\.[0-9]+\.[0-9]+' || true)
     if [ -n "$TS_IP" ]; then
       success "Tailscale connected: $TS_IP"
@@ -577,7 +573,7 @@ Enable \`Reusable\` and \`Ephemeral\` when creating the key."
   # Wait for gateway to start listening (OpenClaw takes ~30-40s to initialize)
   info "Waiting for gateway to start..."
   GW_READY=false
-  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
     if fly ssh console -a "$APP_NAME" -C "node -e \"require('http').get('http://localhost:3000',r=>{process.exit(r.statusCode?0:1)}).on('error',()=>process.exit(1))\"" 2>/dev/null; then
       GW_READY=true
       success "Gateway listening on :3000"
@@ -760,15 +756,15 @@ do_verify() {
   add_result() {
     local check="$1" status="$2" detail="$3"
     if [ "$status" = "pass" ]; then
-      ((PASSED++))
+      PASSED=$((PASSED + 1))
       success "$check: $detail"
       MD_RESULTS+="| ✓ | $check | $detail |\n"
     elif [ "$status" = "fail" ]; then
-      ((FAILED++))
+      FAILED=$((FAILED + 1))
       error "$check: $detail"
       MD_RESULTS+="| ✗ | $check | $detail |\n"
     elif [ "$status" = "warn" ]; then
-      ((WARNED++))
+      WARNED=$((WARNED + 1))
       warn "$check: $detail"
       MD_RESULTS+="| ! | $check | $detail |\n"
     fi
@@ -922,7 +918,7 @@ do_sync_config() {
   fi
 
   info "Removing stale config and lock files from volume..."
-  RM_OUT=$(fly ssh console -a "$APP" --command "rm -f /data/openclaw.json /data/openclaw.json.bak /data/gateway.*.lock && echo ok" 2>&1) || {
+  RM_OUT=$(fly ssh console -a "$APP" -C "rm -f /data/openclaw.json /data/openclaw.json.bak /data/gateway.*.lock && echo ok" 2>&1) || {
     error "Could not remove config: $RM_OUT"
     return 1
   }

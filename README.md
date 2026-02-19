@@ -41,12 +41,7 @@ The setup script walks you through everything interactively:
 4. **Deploy** — builds the image, creates the volume, deploys the machine
 5. **IP hardening** — releases public IPs, allocates private-only IPv6
 
-After the script finishes, configure your channels and providers:
-
-```bash
-fly ssh console -a your-app-name
-openclaw onboard
-```
+After the script finishes, open the Control UI from any device on your tailnet to complete setup — see [Accessing Your Instance](#accessing-your-instance) and [Configuring Channels & Providers](#configuring-channels--providers).
 
 <details>
 <summary>Manual setup (without script)</summary>
@@ -109,14 +104,9 @@ fly ips list -a your-app-name
 
 ### 6. Configure OpenClaw
 
-SSH into the running machine and run the interactive onboarding wizard:
+Open the Control UI in your browser at `http://your-app-name:3000` from any device on your tailnet. Configure channels, providers, and models from there. Config is written to `/data/openclaw.json` on the persistent volume and survives gateway restarts and redeploys.
 
-```bash
-fly ssh console -a your-app-name
-openclaw onboard
-```
-
-This walks you through provider setup, channel pairing (Discord, Telegram, etc.), and model selection. Config is written to `/data/openclaw.json` on the persistent volume and survives redeploys.
+> **Do not use `openclaw onboard` in SSH.** When you save config, the gateway briefly restarts to apply changes, which drops SSH sessions mid-wizard. The browser reconnects automatically.
 
 </details>
 
@@ -142,7 +132,7 @@ On the overview page, paste your gateway token into the **Gateway Token** field 
 
 ## Configuring Channels & Providers
 
-Configure everything through the **Control UI** in your browser at `http://openbox:3000` (or whatever your app name is). This is the recommended approach for this deployment.
+Configure everything through the **Control UI** in your browser at `http://your-app-name:3000`. Config is written to `/data/openclaw.json` on the persistent volume and survives gateway restarts — the browser reconnects automatically after each save, so configuration always completes safely.
 
 > **Do not use `openclaw onboard` in SSH.** When you save config, the gateway briefly restarts to apply changes. This drops SSH sessions mid-wizard, making it impossible to complete. The browser reconnects automatically after the restart — the CLI does not.
 
@@ -276,12 +266,7 @@ fly secrets set TAILSCALE_AUTHKEY="tskey-auth-NEW..." -a your-app-name
 
 ### Re-running onboarding
 
-SSH in and run the wizard again at any time:
-
-```bash
-fly ssh console -a your-app-name
-openclaw onboard
-```
+Open the Control UI from any device on your tailnet (`http://your-app-name:3000`) to reconfigure channels, providers, and models. Config is written to `/data/openclaw.json` on the persistent volume and survives gateway restarts — the browser reconnects automatically after each save.
 
 ### Gateway lock file errors
 
