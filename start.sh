@@ -3,15 +3,15 @@ set -e
 
 # Persist ~/.openclaw to volume so config/approvals survive redeploys
 mkdir -p /data/.openclaw
-if [ ! -L /root/.openclaw ]; then
-  [ -d /root/.openclaw ] && cp -rn /root/.openclaw/. /data/.openclaw/ 2>/dev/null || true
-  rm -rf /root/.openclaw
-  ln -s /data/.openclaw /root/.openclaw
+if [ ! -L "${HOME}/.openclaw" ]; then
+  [ -d "${HOME}/.openclaw" ] && cp -rn "${HOME}/.openclaw/." /data/.openclaw/ 2>/dev/null || true
+  rm -rf "${HOME}/.openclaw"
+  ln -s /data/.openclaw "${HOME}/.openclaw"
 fi
 
 # Create state directories with restricted permissions
 mkdir -p /data/tailscale /data/credentials
-chmod 700 /data /data/credentials
+chmod 700 /data/credentials
 
 # Copy default config if none exists
 if [ ! -f /data/openclaw.json ]; then

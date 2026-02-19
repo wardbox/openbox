@@ -197,6 +197,11 @@ preflight() {
     exit 1
   fi
 
+  if ! command -v jq &>/dev/null; then
+    error "jq not found. Install it: https://stedolan.github.io/jq/"
+    exit 1
+  fi
+
   if ! fly auth whoami &>/dev/null 2>&1; then
     error "Not logged in to Fly.io. Run: fly auth login"
     exit 1
@@ -861,7 +866,7 @@ do_verify() {
   if [[ "$CFG_CHECK" == *"yes"* ]]; then
     add_result "Config file" "pass" "/data/openclaw.json"
   else
-    add_result "Config file" "warn" "missing — run openclaw onboard"
+    add_result "Config file" "warn" "missing — configure via the Control UI"
   fi
 
   # 10. Config permissions

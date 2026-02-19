@@ -4,7 +4,7 @@ Deploy [OpenClaw](https://github.com/openclaw-ai/openclaw) (self-hosted AI agent
 
 ## Architecture
 
-```
+```text
 [Your Devices on Tailscale] --> [Tailscale Mesh] --> [Fly.io Machine (no public IP)]
                                                          |
                                                     [OpenClaw Gateway :3000]
@@ -122,7 +122,7 @@ Or check the [Tailscale admin console](https://login.tailscale.com/admin/machine
 
 From any device on your tailnet, open in your browser:
 
-```
+```text
 http://100.x.y.z:3000
 ```
 
@@ -206,7 +206,7 @@ openclaw security audit --deep
 
 Running `openclaw security audit` will report one **CRITICAL** finding on this deployment:
 
-```
+```text
 CRITICAL  gateway.control_ui.insecure_auth
           Control UI allows insecure HTTP auth
           gateway.controlUi.allowInsecureAuth=true allows token-only auth
