@@ -35,21 +35,15 @@ RUN update-alternatives --set iptables /usr/sbin/iptables-legacy \
 # Install OpenClaw and Claude CLI globally
 RUN npm install -g openclaw @anthropic-ai/claude-code
 
-# node:22-slim already provides a 'node' user at UID 1000; use it directly.
+# Create runtime directories
+RUN mkdir -p /data /var/run/tailscale
 
-# Create runtime directories and hand them to the node user
-RUN mkdir -p /data /var/run/tailscale \
-    && chown node:node /data /var/run/tailscale
-
-# Switch to the node user for the remainder of the build and at runtime
-USER node
-
-# Pre-configure OpenClaw service files so `openclaw gateway status` works cleanly.
+# Pre-configure OpenClaw service files
 RUN openclaw doctor --repair || true
 
 # Copy entrypoint and default config
-COPY --chown=node:node start.sh /start.sh
-COPY --chown=node:node openclaw.json /openclaw.json
+COPY start.sh /start.sh
+COPY openclaw.json /openclaw.json
 RUN chmod +x /start.sh
 
 ENTRYPOINT ["/start.sh"]

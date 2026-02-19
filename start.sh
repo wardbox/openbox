@@ -1,31 +1,6 @@
 #!/bin/bash
 set -e
 
-# ---------------------------------------------------------------------------
-# Volume permission check
-# If /data contains files we can't write (root-owned from a prior deployment),
-# fail immediately with a clear fix rather than crashing deep inside openclaw.
-# Fix: fly ssh console -a <app>  →  chown -R node:node /data
-# ---------------------------------------------------------------------------
-PERM_ERRORS=0
-for path in /data /data/.openclaw /data/credentials /data/openclaw.json; do
-  if [ -e "$path" ] && ! [ -w "$path" ]; then
-    echo "ERROR: cannot write to $path (owned by $(stat -c '%U' "$path" 2>/dev/null || echo 'unknown'))" >&2
-    PERM_ERRORS=$((PERM_ERRORS + 1))
-  fi
-done
-if [ "$PERM_ERRORS" -gt 0 ]; then
-  echo "" >&2
-  echo "VOLUME OWNERSHIP MISMATCH — container will not start correctly." >&2
-  echo "Fix by running:" >&2
-  echo "  fly ssh console -a ${FLY_APP_NAME:-<your-app>}" >&2
-  echo "  chown -R node:node /data" >&2
-  echo "" >&2
-  echo "Sleeping 60 s before exit to allow SSH access for debugging." >&2
-  sleep 60
-  exit 1
-fi
-
 # Persist ~/.openclaw to volume so config/approvals survive redeploys
 mkdir -p /data/.openclaw
 if [ ! -L "${HOME}/.openclaw" ]; then
@@ -34,20 +9,14 @@ if [ ! -L "${HOME}/.openclaw" ]; then
   ln -s /data/.openclaw "${HOME}/.openclaw"
 fi
 
-# Create state directories with restricted permissions.
-# chmod may fail if a previous deployment left these owned by a different user;
-# treat as non-fatal so the container doesn't crash-loop.
+# Create state directory
 mkdir -p /data/credentials
-chmod 700 /data/credentials 2>/dev/null || echo "Warning: could not set permissions on /data/credentials (pre-existing ownership)"
 
 # Copy default config if none exists
 if [ ! -f /data/openclaw.json ]; then
   cp /openclaw.json /data/openclaw.json
   echo "Copied default openclaw.json to /data/"
 fi
-
-# Lock down config file permissions
-chmod 600 /data/openclaw.json 2>/dev/null || echo "Warning: could not set permissions on /data/openclaw.json (pre-existing ownership)"
 
 # Start tailscaled in userspace networking mode (no /dev/net/tun on Fly.io)
 tailscaled --state=mem: \
