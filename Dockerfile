@@ -38,8 +38,11 @@ RUN npm install -g openclaw @anthropic-ai/claude-code
 # Create runtime directories
 RUN mkdir -p /data /var/run/tailscale
 
-# Pre-configure OpenClaw service files
+# Pre-configure OpenClaw service files, then wipe any build-time device tokens.
+# Leaving them in the image causes "device token mismatch" at runtime because
+# the gateway is fresh but the copied tokens reference a build-time session.
 RUN openclaw doctor --repair || true
+RUN rm -rf /root/.openclaw
 
 # Copy entrypoint and default config
 COPY start.sh /start.sh
