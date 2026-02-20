@@ -1,28 +1,28 @@
-# OpenClaw on Fly.io + Tailscale
+# OpenBox
 
-Deploy [OpenClaw](https://github.com/openclaw-ai/openclaw) (self-hosted AI agent gateway) on Fly.io, accessible **only** via your Tailscale network. No public IPs, no public services. Clone, set secrets, deploy.
+Deploy [OpenClaw](https://github.com/openclaw-ai/openclaw) (self-hosted AI agent gateway) on DigitalOcean, accessible **only** via your Tailscale network. No public IPs, no public services. Clone, configure, deploy.
 
 ## Architecture
 
 ```text
-[Your Devices on Tailscale] --> [Tailscale Mesh] --> [Fly.io Machine (no public IP)]
+[Your Devices on Tailscale] --> [Tailscale Mesh] --> [DigitalOcean Droplet (no public inbound)]
                                                          |
                                                     [OpenClaw Gateway :3000]
                                                     [Tailscale daemon]
-                                                    [Fly Volume /data]
+                                                    [Persistent /data directory]
 ```
 
-- Single Fly.io machine running OpenClaw + Tailscale in one container
-- No `[[services]]` in fly.toml = no public HTTP/HTTPS routing
-- All public IPs released after deploy
-- Only reachable via Tailscale IP (e.g., `http://100.x.y.z:3000`)
-- Persistent volume at `/data` for OpenClaw state + Tailscale state
+- Single droplet running OpenClaw + Tailscale natively (not containerized)
+- DigitalOcean firewall blocks all public inbound traffic
+- Only reachable via Tailscale (MagicDNS or IP, e.g., `http://openclaw:3000`)
+- Persistent data at `/data` for OpenClaw state and config
 
 ## Prerequisites
 
-- [Fly.io](https://fly.io) account with `flyctl` installed and logged in (`fly auth login`)
+- [DigitalOcean](https://www.digitalocean.com) account with `doctl` installed and authenticated (`doctl auth init`)
 - [Tailscale](https://tailscale.com) account with an auth key ([generate one here](https://login.tailscale.com/admin/settings/keys) — use **reusable** + **ephemeral**)
 - An AI provider API key (e.g., Anthropic)
+- `jq` and `openssl` (usually pre-installed; `brew install jq` if needed)
 - Optional: [gum](https://github.com/charmbracelet/gum) for a nicer setup experience (`brew install gum`)
 
 ## Quick Start
@@ -30,145 +30,72 @@ Deploy [OpenClaw](https://github.com/openclaw-ai/openclaw) (self-hosted AI agent
 ```bash
 git clone https://github.com/YOUR_USER/openbox.git
 cd openbox
-./setup-do.sh
+./setup-do.sh deploy
 ```
 
 The setup script walks you through everything interactively:
 
-1. **Fly.io org** — picks from your existing orgs (auto-selects if you only have one)
-2. **App name & region** — names the deployment and picks the datacenter
-3. **Secrets** — Tailscale auth key, API keys, auto-generates a gateway token
-4. **Deploy** — builds the image, creates the volume, deploys the machine
-5. **IP hardening** — releases public IPs, allocates private-only IPv6
+1. **Droplet name & region** — names the deployment and picks the datacenter
+2. **Droplet size** — choose vCPU/RAM tier
+3. **SSH key** — generates a dedicated ed25519 key and uploads it to DO
+4. **Tailscale** — enter your auth key
+5. **AI provider** — Anthropic, OpenAI, or both
+6. **Channels** — optional Discord and Telegram bot setup
+7. **Deploy** — creates the droplet, installs packages via cloud-init, writes secrets
+8. **Hardening** — applies a DO firewall blocking all public inbound traffic
+9. **Verify** — runs health checks on the deployment
 
-After the script finishes, open the Control UI from any device on your tailnet to complete setup — see [Accessing Your Instance](#accessing-your-instance) and [Configuring Channels & Providers](#configuring-channels--providers).
+After the script finishes, open the gateway URL from any device on your tailnet and paste the gateway token to connect.
 
-<details>
-<summary>Manual setup (without script)</summary>
-
-### 1. Clone and configure
-
-```bash
-git clone https://github.com/YOUR_USER/openbox.git
-cd openbox
-```
-
-Edit `fly.toml` and set your app name:
-
-```toml
-app = "your-app-name"
-```
-
-### 2. Create Fly.io resources
+## Managing Your Deployment
 
 ```bash
-# List your orgs to find the right one
-fly orgs list
-
-fly apps create your-app-name --org your-org
-fly volumes create openclaw_data --region iad --size 1 -a your-app-name
+./setup-do.sh deploy       # Interactive deployment wizard
+./setup-do.sh verify [name] # Check deployment health
+./setup-do.sh teardown [name] # Destroy all resources
 ```
-
-### 3. Set secrets
-
-```bash
-fly secrets set \
-  TAILSCALE_AUTHKEY="tskey-auth-..." \
-  OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)" \
-  ANTHROPIC_API_KEY="sk-ant-..." \
-  -a your-app-name
-```
-
-### 4. Deploy
-
-```bash
-fly deploy
-```
-
-### 5. Release public IPs
-
-Fly.io allocates public IPs by default. Remove them and allocate a private-only IPv6 so the machine is only reachable via Tailscale:
-
-```bash
-fly ips list -a your-app-name
-fly ips release <ipv4-address> -a your-app-name
-fly ips release <ipv6-address> -a your-app-name
-fly ips allocate-v6 --private -a your-app-name
-```
-
-Verify only a `private` type IP remains:
-
-```bash
-fly ips list -a your-app-name
-```
-
-### 6. Configure OpenClaw
-
-Open the Control UI in your browser at `http://your-app-name:3000` from any device on your tailnet. Configure channels, providers, and models from there. Config is written to `/data/openclaw.json` on the persistent volume and survives gateway restarts and redeploys.
-
-> **Do not use `openclaw onboard` in SSH.** When you save config, the gateway briefly restarts to apply changes, which drops SSH sessions mid-wizard. The browser reconnects automatically.
-
-</details>
 
 ## Accessing Your Instance
 
-Find the Tailscale IP in the deploy logs:
-
-```bash
-fly logs -a your-app-name  # Look for "OpenClaw accessible at http://100.x.y.z:3000"
-```
-
-Or check the [Tailscale admin console](https://login.tailscale.com/admin/machines) for your machine.
-
-From any device on your tailnet, open in your browser:
+From any device on your tailnet:
 
 ```text
-http://100.x.y.z:3000
+http://openclaw:3000
 ```
+
+Or use the Tailscale IP directly (`http://100.x.y.z:3000`). Check the [Tailscale admin console](https://login.tailscale.com/admin/machines) for your machine's IP.
 
 On the overview page, paste your gateway token into the **Gateway Token** field and click **Connect**.
 
-> **Note:** The control UI runs over HTTP (not HTTPS) because Fly.io containers use Tailscale userspace networking, which doesn't support Tailscale Serve. Security is maintained by Tailscale-only access (no public IPs) + token auth. The `controlUi.allowInsecureAuth` setting enables this.
+> **Note:** The control UI runs over HTTP (not HTTPS). Security is maintained by Tailscale-only access (no public inbound) + token auth. The `controlUi.allowInsecureAuth` setting in `openclaw.json` enables this.
 
 ## Configuring Channels & Providers
 
-Configure everything through the **Control UI** in your browser at `http://your-app-name:3000`. Config is written to `/data/openclaw.json` on the persistent volume and survives gateway restarts — the browser reconnects automatically after each save, so configuration always completes safely.
+Configure everything through the **Control UI** in your browser at `http://openclaw:3000`. Config is written to `/data/openclaw.json` on the droplet and survives restarts.
 
-> **Do not use `openclaw onboard` in SSH.** When you save config, the gateway briefly restarts to apply changes. This drops SSH sessions mid-wizard, making it impossible to complete. The browser reconnects automatically after the restart — the CLI does not.
-
-To add channel tokens (Discord, Telegram, etc.), set them as Fly secrets so they're available as environment variables — do not put them in the config file:
+To add or rotate secrets (channel tokens, API keys), update `/data/.env` on the droplet and restart the service:
 
 ```bash
-fly secrets set DISCORD_BOT_TOKEN="..." -a your-app-name
-```
-
-See `.env.example` for all configurable values.
-
-If you need to edit the config file directly:
-
-```bash
-# Write via tee (fly ssh console doesn't support shell redirection)
-echo '{"your":"config"}' | fly ssh console -a your-app-name -C "tee /data/openclaw.json"
-
-# Or use sftp
-fly sftp shell -a your-app-name
-> put /local/path/config.json /data/openclaw.json
+ssh root@openclaw           # via Tailscale SSH
+nano /data/.env              # edit secrets
+systemctl restart openclaw   # apply changes
 ```
 
 ## Updating OpenClaw
 
-Redeploying rebuilds the Docker image, which installs the latest version of OpenClaw via npm. Use `--no-cache` to ensure you get the latest version (bypasses Docker layer caching):
+SSH into the droplet and reinstall:
 
 ```bash
-fly deploy --no-cache -a your-app-name
+ssh root@openclaw
+npm install -g openclaw
+systemctl restart openclaw
 ```
 
-Your configuration and state on the `/data` volume are preserved across deploys.
+Your configuration and state in `/data` are preserved across updates.
 
 After updating, verify the deployment is healthy:
 
 ```bash
-fly ssh console -a your-app-name
 openclaw doctor
 openclaw security audit
 ```
@@ -177,120 +104,94 @@ openclaw security audit
 
 | Layer | Protection |
 |-------|-----------|
-| Network | No public IPs allocated. No `[[services]]` in fly.toml = no public HTTP routing. Hidden from internet scanners. |
+| Network | DO firewall blocks all public inbound. No exposed ports. |
 | Access | Tailscale is the **only** network path to the gateway. |
-| Transport | HTTP over Tailscale (no public exposure). `controlUi.allowInsecureAuth` enables token-only auth. Tailscale Serve unavailable due to userspace networking. |
-| Auth | Token-based gateway auth (`OPENCLAW_GATEWAY_TOKEN`) required for all API access. |
-| Secrets | API keys stored as Fly secrets (encrypted, never in config files or repo). |
-| Tailscale | Auth key is ephemeral — node auto-removed from tailnet on shutdown. |
-| Shutdown | Graceful `tailscale logout` on SIGTERM cleans up the mesh node. |
-| Tools | High-risk groups (`automation`, `runtime`) + control-plane tools (`gateway`, `cron`, `sessions_spawn`, `sessions_send`) denied. File ops confined to workspace. |
+| Transport | HTTP over Tailscale (WireGuard-encrypted). `controlUi.allowInsecureAuth` enables token-only auth. |
+| Auth | Token-based gateway auth (`OPENCLAW_GATEWAY_TOKEN`) required for all API access. Rate-limited. |
+| Secrets | API keys stored in `/data/.env` (permissions 600), never in config files or git. |
+| Tailscale | Auth key is ephemeral — node auto-removed from tailnet on key expiry. Tailscale SSH enabled. |
+| Tools | Control-plane tools (`gateway`) denied. File ops confined to workspace. |
 | Logging | Sensitive tool output redacted in logs (`logging.redactSensitive: "tools"`). |
 | Discovery | mDNS disabled in config + `OPENCLAW_DISABLE_BONJOUR=1` env var. |
-| Filesystem | Config file permissions locked to `600`, state directory to `700`. |
-| Container | Minimal `node:22-slim` base image. |
-| Storage | State persisted on encrypted Fly volume at `/data`. |
+| Filesystem | Config file permissions locked to `600`, data directory to `700`. |
 
 ### Running a security audit
 
-OpenClaw includes a built-in security audit tool. Run it after initial setup and after any config changes:
-
 ```bash
-fly ssh console -a your-app-name
+ssh root@openclaw
 openclaw security audit
 # For a deeper check:
 openclaw security audit --deep
 ```
 
-#### Known audit findings
-
-Running `openclaw security audit` will report one **CRITICAL** finding on this deployment:
-
-```text
-CRITICAL  gateway.control_ui.insecure_auth
-          Control UI allows insecure HTTP auth
-          gateway.controlUi.allowInsecureAuth=true allows token-only auth
-          over HTTP and skips device identity.
-          Fix: Disable it or switch to HTTPS (Tailscale Serve) or localhost.
-```
-
-**This is a known, accepted trade-off for this deployment pattern.** Here's why it's safe:
-
-- Tailscale Serve (HTTPS) requires kernel-level networking (`/dev/net/tun`), which is not available on Fly.io machines. The setting exists because OpenClaw's default behavior requires HTTPS or localhost for the control UI — `allowInsecureAuth` opts out of that requirement.
-- The gateway has **no public IP** and is **not routable from the internet**. The only network path to it is through your Tailscale mesh.
-- All traffic still requires a valid `OPENCLAW_GATEWAY_TOKEN` to connect.
-- Auth brute-forcing is mitigated by rate limiting (`gateway.auth.rateLimit` in `openclaw.json`).
-
-In short: the "insecure" refers to the absence of TLS transport encryption, not an open gateway. Tailscale encrypts all traffic between your devices and the machine at the WireGuard layer, providing equivalent transport security.
-
 ### Rotating credentials
 
-If you need to rotate the gateway token or API keys:
-
 ```bash
-# Generate and set a new gateway token
-fly secrets set OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)" -a your-app-name
-
-# Rotate provider keys
-fly secrets set ANTHROPIC_API_KEY="sk-ant-NEW..." -a your-app-name
+ssh root@openclaw
+nano /data/.env              # update the key
+systemctl restart openclaw   # apply
 ```
-
-Setting a secret automatically restarts the machine. Verify old credentials no longer work after rotation.
 
 ## Troubleshooting
 
-### Machine won't start / OOM
+### Droplet won't start / OOM
 
-The default VM is `shared-cpu-2x` with 2GB RAM. If OpenClaw needs more, bump it in `fly.toml`:
-
-```toml
-[[vm]]
-  size = "shared-cpu-4x"
-  memory = 4096
-```
+The default droplet is `s-1vcpu-2gb`. If OpenClaw needs more, destroy and redeploy with a larger size, or resize via the DO console.
 
 ### Tailscale auth key expired
 
-Generate a new auth key at [Tailscale admin](https://login.tailscale.com/admin/settings/keys) and update the secret:
+Generate a new auth key at [Tailscale admin](https://login.tailscale.com/admin/settings/keys) and update on the droplet:
 
 ```bash
-fly secrets set TAILSCALE_AUTHKEY="tskey-auth-NEW..." -a your-app-name
+ssh root@openclaw
+# Update TAILSCALE_AUTHKEY in /data/.env, then:
+tailscale up --authkey='tskey-auth-NEW...' --hostname='openclaw' --ssh
 ```
 
 ### Can't reach the gateway
 
-- Verify the machine is running: `fly status -a your-app-name`
-- Check logs for the Tailscale IP: `fly logs -a your-app-name`
 - Ensure your device is connected to the same tailnet
-- Try the Tailscale IP directly: `curl http://100.x.y.z:3000`
+- Check Tailscale status: `ssh root@openclaw 'tailscale status'` (via public IP if Tailscale SSH isn't working)
+- Check the service: `ssh root@openclaw 'systemctl status openclaw'`
+- Check logs: `ssh root@openclaw 'journalctl -u openclaw -n 50'`
+- Run verify: `./setup-do.sh verify`
 
-### Re-running onboarding
+### OpenClaw command not found
 
-Open the Control UI from any device on your tailnet (`http://your-app-name:3000`) to reconfigure channels, providers, and models. Config is written to `/data/openclaw.json` on the persistent volume and survives gateway restarts — the browser reconnects automatically after each save.
-
-### Gateway lock file errors
-
-If OpenClaw complains about lock files after a crash:
+The global npm install may have been corrupted. Reinstall:
 
 ```bash
-fly ssh console -a your-app-name
-rm -f /data/gateway.*.lock
-exit
-fly machines restart -a your-app-name
+ssh root@openclaw
+rm -rf /usr/lib/node_modules/openclaw /usr/lib/node_modules/.openclaw-*
+npm install -g openclaw
+systemctl restart openclaw
 ```
 
 ### Viewing OpenClaw health
 
 ```bash
-fly ssh console -a your-app-name
+ssh root@openclaw
 openclaw gateway status
-```
-
-This will show gateway health, the port it's listening on, and whether the probe succeeds. You'll see systemd-related warnings — these are expected and harmless in a container. What matters is the probe result at the bottom.
-
-> **Note:** Do not run `openclaw doctor --repair` inside the container. It rewrites `/data/openclaw.json` on the volume, which can overwrite settings like the port. Use `openclaw doctor` (without `--repair`) for read-only diagnostics.
-
-```bash
-fly ssh console -a your-app-name
 openclaw doctor
 ```
+
+<details>
+<summary>Legacy: Fly.io deployment</summary>
+
+The project originally targeted Fly.io. The `Dockerfile`, `start.sh`, and `fly.toml` files remain for this path. Key differences from the DO deployment:
+
+- Runs as a Docker container instead of natively on the host
+- Uses Tailscale in userspace networking mode (no `/dev/net/tun`), which means Tailscale Serve (HTTPS) is not available
+- Public IPs must be manually released after deploy
+- Secrets managed via `fly secrets set`
+
+```bash
+fly deploy
+fly ips release <ipv4> -a your-app-name
+fly ips release <ipv6> -a your-app-name
+fly ips allocate-v6 --private -a your-app-name
+```
+
+See `fly.toml` for configuration. This path is no longer actively maintained.
+
+</details>
