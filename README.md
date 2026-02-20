@@ -28,8 +28,8 @@ Deploy [OpenClaw](https://github.com/openclaw-ai/openclaw) (self-hosted AI agent
 ## Quick Start
 
 ```bash
-git clone https://github.com/YOUR_USER/openclaw-flyio.git
-cd openclaw-flyio
+git clone https://github.com/YOUR_USER/openbox.git
+cd openbox
 ./setup.sh
 ```
 
@@ -49,8 +49,8 @@ After the script finishes, open the Control UI from any device on your tailnet t
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/YOUR_USER/openclaw-flyio.git
-cd openclaw-flyio
+git clone https://github.com/YOUR_USER/openbox.git
+cd openbox
 ```
 
 Edit `fly.toml` and set your app name:
