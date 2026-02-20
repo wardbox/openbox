@@ -287,13 +287,33 @@ Enable \`Reusable\` and \`Ephemeral\` when creating the key."
     "Anthropic" "OpenAI" "Both" "Skip (set later)")
 
   if [[ "$PROVIDER" == "Anthropic" || "$PROVIDER" == "Both" ]]; then
-    ANTHROPIC_API_KEY=$(prompt_secret "Anthropic API key")
-    [ -n "$ANTHROPIC_API_KEY" ] && success "Anthropic key set"
+    while true; do
+      ANTHROPIC_API_KEY=$(prompt_secret "Anthropic API key")
+      if [ -z "$ANTHROPIC_API_KEY" ]; then
+        break
+      elif [[ "$ANTHROPIC_API_KEY" == sk-ant-* ]]; then
+        success "Anthropic key set"
+        break
+      else
+        warn "Key should start with 'sk-ant-' — got '${ANTHROPIC_API_KEY:0:6}...'"
+        warn "This can happen if gum swallows the first character on paste. Try again."
+      fi
+    done
   fi
 
   if [[ "$PROVIDER" == "OpenAI" || "$PROVIDER" == "Both" ]]; then
-    OPENAI_API_KEY=$(prompt_secret "OpenAI API key")
-    [ -n "$OPENAI_API_KEY" ] && success "OpenAI key set"
+    while true; do
+      OPENAI_API_KEY=$(prompt_secret "OpenAI API key")
+      if [ -z "$OPENAI_API_KEY" ]; then
+        break
+      elif [[ "$OPENAI_API_KEY" == sk-* ]]; then
+        success "OpenAI key set"
+        break
+      else
+        warn "Key should start with 'sk-' — got '${OPENAI_API_KEY:0:6}...'"
+        warn "This can happen if gum swallows the first character on paste. Try again."
+      fi
+    done
   fi
 
   # ── Channels
@@ -528,8 +548,8 @@ GATEWAY_PID=$!
 WAIT=0
 until curl -sf "http://127.0.0.1:${OPENCLAW_GATEWAY_PORT:-3000}/health" > /dev/null 2>&1; do
   WAIT=$((WAIT + 1))
-  if [ $WAIT -gt 60 ]; then
-    echo "ERROR: gateway failed to start after 60s" >&2
+  if [ $WAIT -gt 120 ]; then
+    echo "ERROR: gateway failed to start after 120s" >&2
     kill $GATEWAY_PID 2>/dev/null
     exit 1
   fi
@@ -731,6 +751,12 @@ do_verify() {
     APP=${APP:-openclaw}
   fi
 
+  # Ensure SSH key path is set
+  if [ -z "$SSH_KEY_PATH" ]; then
+    SSH_KEY_PATH="${HOME}/.ssh/openclaw_${APP}_ed25519"
+    [ ! -f "$SSH_KEY_PATH" ] && SSH_KEY_PATH=""
+  fi
+
   if [ -z "$DROPLET_ID_ARG" ]; then
     DROPLET_ID_ARG=$(doctl compute droplet list --format ID,Name --no-header 2>/dev/null \
       | awk -v n="$APP" '$2==n{print $1}' | head -1)
@@ -792,22 +818,54 @@ do_verify() {
     add_result "Firewall" "warn" "not found — public access may be open"
   fi
 
-  # 4. SSH reachable (via public IP — will fail once firewall blocks port 22)
-  if ssh -i "$SSH_KEY_PATH" \
+  # 4. SSH reachable — try public IP first, fall back to Tailscale hostname
+  SSH_OK=false
+  SSH_VIA=""
+
+  # Try public IP with key
+  if [ -n "$SSH_KEY_PATH" ] && ssh -i "$SSH_KEY_PATH" \
         -o StrictHostKeyChecking=no \
         -o ConnectTimeout=5 \
         -o BatchMode=yes \
         "root@${DROPLET_IP}" exit 2>/dev/null; then
     SSH_OK=true
-    add_result "SSH" "pass" "reachable (public)"
-  else
-    SSH_OK=false
-    add_result "SSH" "warn" "blocked via public IP (use Tailscale SSH)"
+    SSH_VIA="public"
+    add_result "SSH" "pass" "reachable (public IP)"
   fi
+
+  # Fall back to Tailscale SSH
+  if ! $SSH_OK && ssh -o StrictHostKeyChecking=no \
+        -o ConnectTimeout=5 \
+        -o BatchMode=yes \
+        "root@${APP}" exit 2>/dev/null; then
+    SSH_OK=true
+    SSH_VIA="tailscale"
+    add_result "SSH" "pass" "reachable (Tailscale)"
+  fi
+
+  if ! $SSH_OK; then
+    add_result "SSH" "warn" "not reachable via public IP or Tailscale"
+  fi
+
+  # Helper for SSH commands during verify — uses whichever path worked
+  verify_ssh() {
+    if [ "$SSH_VIA" = "public" ]; then
+      ssh -i "$SSH_KEY_PATH" \
+          -o StrictHostKeyChecking=no \
+          -o ConnectTimeout=10 \
+          -o BatchMode=yes \
+          "root@${DROPLET_IP}" "$@"
+    else
+      ssh -o StrictHostKeyChecking=no \
+          -o ConnectTimeout=10 \
+          -o BatchMode=yes \
+          "root@${APP}" "$@"
+    fi
+  }
 
   if $SSH_OK; then
     # 5. Tailscale
-    TS_IP=$(remote "tailscale ip -4 2>/dev/null" | tr -d '[:space:]' | grep -oE '100\.[0-9]+\.[0-9]+\.[0-9]+' || true)
+    TS_IP=$(verify_ssh "tailscale ip -4 2>/dev/null" | tr -d '[:space:]' | grep -oE '100\.[0-9]+\.[0-9]+\.[0-9]+' || true)
     if [ -n "$TS_IP" ]; then
       add_result "Tailscale" "pass" "$TS_IP"
     elif [ -n "$TS_IP_HINT" ]; then
@@ -818,7 +876,7 @@ do_verify() {
     fi
 
     # 6. OpenClaw service
-    SVC_STATUS=$(remote "systemctl is-active openclaw 2>/dev/null" | tr -d '[:space:]' || echo "unknown")
+    SVC_STATUS=$(verify_ssh "systemctl is-active openclaw 2>/dev/null" | tr -d '[:space:]' || echo "unknown")
     if [ "$SVC_STATUS" = "active" ]; then
       add_result "OpenClaw service" "pass" "active"
     else
@@ -826,28 +884,28 @@ do_verify() {
     fi
 
     # 7. Gateway port
-    if remote "curl -sf http://127.0.0.1:3000/health" >/dev/null 2>&1; then
+    if verify_ssh "curl -sf http://127.0.0.1:3000/health" >/dev/null 2>&1; then
       add_result "Gateway port" "pass" "listening on :3000"
     else
       add_result "Gateway port" "fail" "not responding on :3000"
     fi
 
     # 8. Volume / data dir
-    if remote "[ -d /data ] && df /data" >/dev/null 2>&1; then
+    if verify_ssh "[ -d /data ] && df /data" >/dev/null 2>&1; then
       add_result "Data directory" "pass" "/data exists"
     else
       add_result "Data directory" "fail" "/data not found"
     fi
 
     # 9. Config file
-    if remote "[ -f /data/openclaw.json ]" 2>/dev/null; then
+    if verify_ssh "[ -f /data/openclaw.json ]" 2>/dev/null; then
       add_result "Config file" "pass" "/data/openclaw.json"
     else
       add_result "Config file" "warn" "missing — configure via Control UI"
     fi
 
     # 10. Config permissions
-    PERMS=$(remote "stat -c %a /data/openclaw.json 2>/dev/null" | tr -d '[:space:]' || echo "")
+    PERMS=$(verify_ssh "stat -c %a /data/openclaw.json 2>/dev/null" | tr -d '[:space:]' || echo "")
     if [ "$PERMS" = "600" ]; then
       add_result "Config permissions" "pass" "600 (owner-only)"
     elif [ -n "$PERMS" ]; then
@@ -882,6 +940,12 @@ do_teardown() {
   if [ -z "$APP" ]; then
     APP=$(prompt_input "Droplet name to destroy" "openclaw")
     APP=${APP:-openclaw}
+  fi
+
+  # Ensure SSH key path is set
+  if [ -z "$SSH_KEY_PATH" ]; then
+    SSH_KEY_PATH="${HOME}/.ssh/openclaw_${APP}_ed25519"
+    [ ! -f "$SSH_KEY_PATH" ] && SSH_KEY_PATH=""
   fi
 
   DROPLET_ID=$(doctl compute droplet list --format ID,Name --no-header 2>/dev/null \

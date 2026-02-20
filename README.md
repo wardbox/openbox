@@ -30,7 +30,7 @@ Deploy [OpenClaw](https://github.com/openclaw-ai/openclaw) (self-hosted AI agent
 ```bash
 git clone https://github.com/YOUR_USER/openbox.git
 cd openbox
-./setup.sh
+./setup-do.sh
 ```
 
 The setup script walks you through everything interactively:

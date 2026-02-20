@@ -8,8 +8,6 @@
   },
   "tools": {
     "deny": [
-      "group:automation",
-      "group:runtime",
       "gateway"
     ],
     "fs": {

@@ -32,7 +32,7 @@ There are no local test, lint, or build commands — this is an orchestration/in
 
 ## Architecture
 
-```
+```text
 [Tailscale mesh devices] --> [Tailscale daemon] --> [OpenClaw Gateway :3000]
                                                           |
                                                    [Persistent /data volume]
