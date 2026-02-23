@@ -428,6 +428,9 @@ runcmd:
   # Data directory
   - mkdir -p /data/credentials /opt/openclaw
   - chmod 700 /data
+  # Shell env — ensure interactive sessions use the same config as systemd
+  - echo 'export OPENCLAW_CONFIG_PATH=/data/openclaw.json' >> /root/.bashrc
+  - echo 'export OPENCLAW_STATE_DIR=/data' >> /root/.bashrc
   # Done sentinel
   - touch /var/lib/cloud/instance/openclaw-ready
 CLOUDINIT_EOF
@@ -535,10 +538,7 @@ if [ -n "$OPENCLAW_GATEWAY_TOKEN" ]; then
   openclaw config set gateway.auth.token "$OPENCLAW_GATEWAY_TOKEN" 2>/dev/null || true
 fi
 
-# Install gateway as systemd-managed service for auto-restart
-openclaw gateway install 2>/dev/null || true
-
-# Start gateway
+# Start gateway (managed by system-level openclaw.service, not openclaw's own installer)
 openclaw gateway \
   --port "${OPENCLAW_GATEWAY_PORT:-3000}" \
   --bind lan &
@@ -628,6 +628,21 @@ UNITEOF
     sleep 5
   done
 
+  # ── Tailscale Serve (HTTPS proxy)
+  info "Enabling Tailscale Serve — HTTPS proxy to gateway..."
+  remote "tailscale serve --bg http://localhost:3000" 2>/dev/null || \
+  remote "tailscale serve --bg https+insecure://localhost:3000" 2>/dev/null || \
+    warn "Could not enable Tailscale Serve — you may need to run 'tailscale serve --bg http://localhost:3000' manually"
+
+  TS_HOSTNAME=$(remote "tailscale status --json 2>/dev/null | grep -o '\"DNSName\":\"[^\"]*\"' | head -1 | cut -d'\"' -f4 | sed 's/\.$//' " || true)
+  if [ -n "$TS_HOSTNAME" ]; then
+    success "Tailscale Serve: https://${TS_HOSTNAME}"
+    # Set gateway.remote.url so OpenClaw tools use wss:// (passes security check)
+    remote "openclaw config set gateway.remote.url '\"wss://${TS_HOSTNAME}\"' --json" 2>/dev/null || true
+  else
+    warn "Could not determine Tailscale hostname — set gateway.remote.url manually"
+  fi
+
   # ── Harden: apply DO Firewall
   section "Hardening"
 
@@ -659,7 +674,11 @@ UNITEOF
   # ── Done
   header "Deployment complete!"
 
-  GATEWAY_URL="http://${APP_NAME}:3000"
+  if [ -n "$TS_HOSTNAME" ]; then
+    GATEWAY_URL="https://${TS_HOSTNAME}"
+  else
+    GATEWAY_URL="http://${APP_NAME}:3000"
+  fi
 
   section "Step 1 — Open your gateway"
 
@@ -671,9 +690,9 @@ UNITEOF
 
   if [ -n "$TS_IP" ]; then
     if $USE_GUM; then
-      gum style --faint "Direct IP fallback: http://${TS_IP}:3000"
+      gum style --faint "HTTP fallback: http://${TS_IP}:3000"
     else
-      echo "  Direct IP fallback: http://${TS_IP}:3000"
+      echo "  HTTP fallback: http://${TS_IP}:3000"
     fi
   fi
 

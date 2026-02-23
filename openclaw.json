@@ -10,6 +10,9 @@
     "deny": [
       "gateway"
     ],
+    "exec": {
+      "ask": "on-miss"
+    },
     "fs": {
       "workspaceOnly": true
     }
@@ -30,6 +33,15 @@
     },
     "controlUi": {
       "allowInsecureAuth": true
+    }
+  },
+  "approvals": {
+    "exec": {
+      "enabled": true,
+      "mode": "session",
+      "agentFilter": [
+        "main"
+      ]
     }
   },
   "discovery": {
