@@ -598,6 +598,92 @@ UNITEOF
   remote "systemctl daemon-reload && systemctl enable openclaw"
   success "Service configured"
 
+  # Write safe update script (stops services before npm install to avoid OOM failures)
+  remote "cat > /usr/local/bin/openclaw-safe-update && chmod +x /usr/local/bin/openclaw-safe-update" << 'UPDATEEOF'
+#!/bin/bash
+set -euo pipefail
+
+RED="\033[0;31m"
+GREEN="\033[0;32m"
+YELLOW="\033[1;33m"
+NC="\033[0m"
+
+info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
+warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+CURRENT_VERSION=$(openclaw --version 2>/dev/null || echo "unknown")
+info "Current version: $CURRENT_VERSION"
+
+LATEST_VERSION=$(npm view openclaw version 2>/dev/null || echo "unknown")
+info "Latest version:  $LATEST_VERSION"
+
+if [ "$CURRENT_VERSION" = "$LATEST_VERSION" ]; then
+    info "Already up to date."
+    exit 0
+fi
+
+# Stop services to free memory for npm install
+info "Stopping openclaw service..."
+systemctl stop openclaw
+
+sleep 2
+if pgrep -f "openclaw" > /dev/null 2>&1; then
+    warn "Processes still running, waiting..."
+    sleep 5
+    pkill -f "openclaw-gateway" 2>/dev/null || true
+    pkill -f "openclaw" 2>/dev/null || true
+    sleep 2
+fi
+
+FREE_MB=$(free -m | awk '/^Mem:/{print $7}')
+info "Available memory: ${FREE_MB}MB"
+
+if [ "$FREE_MB" -lt 200 ]; then
+    warn "Low memory (${FREE_MB}MB). Clearing caches..."
+    sync && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+fi
+
+# Clean any leftover partial installs
+rm -rf /usr/lib/node_modules/.openclaw-* 2>/dev/null || true
+
+info "Installing openclaw@latest..."
+if npm install -g openclaw@latest --no-fund --no-audit 2>&1; then
+    NEW_VERSION=$(openclaw --version 2>/dev/null || echo "unknown")
+    info "Updated to version: $NEW_VERSION"
+else
+    error "npm install failed!"
+    if ! command -v openclaw &>/dev/null; then
+        error "openclaw binary missing — attempting recovery..."
+        rm -rf /usr/lib/node_modules/openclaw /usr/lib/node_modules/.openclaw-* 2>/dev/null || true
+        npm install -g openclaw@latest --no-fund --no-audit 2>&1 || {
+            error "Recovery failed. Run manually:"
+            error "  rm -rf /usr/lib/node_modules/openclaw && npm install -g openclaw@latest"
+            systemctl start openclaw
+            exit 1
+        }
+    fi
+fi
+
+info "Starting openclaw service..."
+systemctl start openclaw
+
+sleep 3
+if systemctl is-active --quiet openclaw; then
+    info "openclaw service is running."
+else
+    error "Service failed to start! Check: journalctl -u openclaw -n 20"
+    exit 1
+fi
+
+info "Update complete."
+UPDATEEOF
+  success "Safe update script installed"
+
+  # Schedule nightly auto-update at 4am UTC
+  remote "echo '0 4 * * * /usr/local/bin/openclaw-safe-update >> /var/log/openclaw-update.log 2>&1' | crontab -"
+  success "Nightly auto-update cron scheduled (4am UTC)"
+
   # ── Start Tailscale
   section "Connecting"
 
