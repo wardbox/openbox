@@ -1,0 +1,52 @@
+{
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "anthropic/claude-sonnet-4-6"
+      }
+    }
+  },
+  "tools": {
+    "deny": [
+      "gateway"
+    ],
+    "exec": {
+      "ask": "on-miss"
+    },
+    "fs": {
+      "workspaceOnly": true
+    }
+  },
+  "logging": {
+    "redactSensitive": "tools"
+  },
+  "gateway": {
+    "port": 3000,
+    "bind": "lan",
+    "auth": {
+      "mode": "token",
+      "rateLimit": {
+        "maxAttempts": 10,
+        "windowMs": 60000,
+        "lockoutMs": 300000
+      }
+    },
+    "controlUi": {
+      "allowInsecureAuth": true
+    }
+  },
+  "approvals": {
+    "exec": {
+      "enabled": true,
+      "mode": "session",
+      "agentFilter": [
+        "main"
+      ]
+    }
+  },
+  "discovery": {
+    "mdns": {
+      "mode": "off"
+    }
+  }
+}

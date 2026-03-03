@@ -1,0 +1,32 @@
+app = "openbox"
+primary_region = "sjc"
+
+[build]
+
+[env]
+  NODE_ENV = "production"
+  OPENCLAW_STATE_DIR = "/data"
+  OPENCLAW_CONFIG_PATH = "/data/openclaw.json"
+  OPENCLAW_PREFER_PNPM = "1"
+  OPENCLAW_GATEWAY_PORT = "3000"
+  NODE_OPTIONS = "--max-old-space-size=1536"
+  OPENCLAW_DISABLE_BONJOUR = "1"
+
+[processes]
+  app = "/start.sh"
+
+[[restart]]
+  policy = "always"
+  max_retries = 10
+
+# NO [[services]] or [http_service] — nothing is publicly exposed.
+# The only network path to this machine is via Tailscale.
+
+[mounts]
+  source = "openclaw_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = 2048
+  swap_size_mb = 512
